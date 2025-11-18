@@ -35,6 +35,7 @@ int create_server_socket(int port) {
 
     return sockfd;
 }
+
 void enqueue_connection(shared_data_t* data, semaphores_t* sems, int client_fd) {
     sem_wait(sems->empty_slots);
     sem_wait(sems->queue_mutex);
@@ -43,4 +44,8 @@ void enqueue_connection(shared_data_t* data, semaphores_t* sems, int client_fd) 
     data->queue.count++;
     sem_post(sems->queue_mutex);
     sem_post(sems->filled_slots);
+}
+
+void create_workers() {
+    
 }
