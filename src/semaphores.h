@@ -1,17 +1,13 @@
+
 #ifndef SEMAPHORES_H
 #define SEMAPHORES_H
-
+#include <pthread.h>
 #include <semaphore.h>
 
-typedef struct {
-    sem_t* empty_slots;
-    sem_t* filled_slots;
-    sem_t* queue_mutex;
-    sem_t* stats_mutex;
-    sem_t* log_mutex;
-} semaphores_t;
+extern sem_t empty_slots;
+extern sem_t filled_slots;
+extern pthread_mutex_t mutex;
 
-int init_semaphores(semaphores_t* sems, int queue_size);
-void destroy_semaphores(semaphores_t* sems);
+void init_semaphores(int max_queue_size);
 
 #endif

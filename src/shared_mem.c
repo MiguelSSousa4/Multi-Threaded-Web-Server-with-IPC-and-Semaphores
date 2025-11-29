@@ -1,27 +1,32 @@
+
 #include "shared_mem.h"
 #include <sys/mman.h>
-#include <fcntl.h>
-#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
-#define SHM_NAME "/webserver_shm"
+connection_queue_t *queue = NULL;
 
-shared_data_t* create_shared_memory() {
-    int shm_fd = shm_open(SHM_NAME, O_CREAT | O_RDWR, 0666);
-    if (shm_fd == -1) return NULL;
-    if (ftruncate(shm_fd, sizeof(shared_data_t)) == -1) {
-        close(shm_fd);
-        return NULL;
+void init_shared_queue(int max_queue_size)
+{
+    queue = mmap(NULL, sizeof(connection_queue_t), PROT_READ | PROT_WRITE,
+                 MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (queue == MAP_FAILED)
+    {
+        perror("mmap");
+        exit(1);
     }
-    shared_data_t* data = mmap(NULL, sizeof(shared_data_t),
-    PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd, 0);
-    close(shm_fd);
-    if (data == MAP_FAILED) return NULL;
-    memset(data, 0, sizeof(shared_data_t));
-    return data;
-}
 
-void destroy_shared_memory(shared_data_t* data) {
-    munmap(data, sizeof(shared_data_t));
-    shm_unlink(SHM_NAME);
+    queue->connections = mmap(NULL, sizeof(int) * max_queue_size,
+                              PROT_READ | PROT_WRITE,
+                              MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    if (queue->connections == MAP_FAILED)
+    {
+        perror("mmap");
+        exit(1);
+    }
+
+    queue->head = 0;
+    queue->tail = 0;
+    queue->max_size = max_queue_size;
 }
