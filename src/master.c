@@ -3,6 +3,7 @@
 #include "ipc.h"
 #include "worker.h"  
 #include "stats.h"
+#include "thread_pool.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
