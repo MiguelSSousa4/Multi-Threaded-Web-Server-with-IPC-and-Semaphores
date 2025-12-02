@@ -8,6 +8,7 @@
 #include <fcntl.h>           
 
 connection_queue_t *queue = NULL;
+server_stats_t *stats = NULL;
 
 void init_shared_queue(int max_queue_size)
 {
@@ -45,6 +46,33 @@ void init_shared_queue(int max_queue_size)
     if (sem_init(&queue->empty_slots, 1, max_queue_size) != 0 ||
         sem_init(&queue->filled_slots, 1, 0) != 0) {
         perror("sem init");
+        exit(1);
+    }
+}
+
+void init_shared_stats()
+{
+    void *mem_block = mmap(NULL, sizeof(server_stats_t), 
+                           PROT_READ | PROT_WRITE, 
+                           MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+
+    if (mem_block == MAP_FAILED) {
+        perror("mmap stats failed");
+        exit(1);
+    }
+
+    stats = (server_stats_t *)mem_block;
+
+    stats->total_requests = 0;
+    stats->bytes_transferred = 0;
+    stats->status_200 = 0;
+    stats->status_404 = 0;
+    stats->status_500 = 0;
+    stats->active_connections = 0;
+    stats->average_response_time = 0;
+
+    if (sem_init(&stats->mutex, 1, 1) != 0) {
+        perror("sem init stats");
         exit(1);
     }
 }

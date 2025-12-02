@@ -1,21 +1,23 @@
 #include "shared_mem.h"
 #include "config.h"
-#include "ipc.h"  
+#include "ipc.h"
+#include "worker.h"  
+#include "stats.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/wait.h>
+#include <pthread.h> 
 
 server_config_t config;
-
-
-extern void start_worker_process(int ipc_socket); 
 
 int main()
 {
     if (load_config("server.conf", &config) != 0) return 1;
+
+    init_shared_stats();
 
     int server_socket = socket(AF_INET, SOCK_STREAM, 0);
     int opt = 1;
@@ -29,11 +31,12 @@ int main()
     bind(server_socket, (struct sockaddr *)&address, sizeof(address));
     listen(server_socket, 128);
 
-    printf("Master (PID: %d) listening. Forking %d workers...\n", getpid(), config.num_workers);
+    printf("Master (PID: %d) listening on port %d.\n", getpid(), config.port);
 
+    pthread_t stats_tid;
+    pthread_create(&stats_tid, NULL, stats_monitor_thread, NULL);
 
     int *worker_pipes = malloc(sizeof(int) * config.num_workers);
-
     for (int i = 0; i < config.num_workers; i++)
     {
         int sv[2]; 
@@ -46,6 +49,7 @@ int main()
         if (pid == 0) {
             close(server_socket); 
             close(sv[0]); 
+
             start_worker_process(sv[1]); 
             exit(0);
         }
@@ -53,6 +57,7 @@ int main()
         close(sv[1]); 
         worker_pipes[i] = sv[0]; 
     }
+
 
     int current_worker = 0;
     while (1) {
@@ -63,9 +68,7 @@ int main()
         if (client_fd < 0) continue;
 
         send_fd(worker_pipes[current_worker], client_fd);
-
         close(client_fd);
-
         current_worker = (current_worker + 1) % config.num_workers;
     }
 
