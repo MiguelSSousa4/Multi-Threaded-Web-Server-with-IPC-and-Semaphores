@@ -54,20 +54,16 @@ int main()
         worker_pipes[i] = sv[0]; 
     }
 
-    // MASTER LOOP (Producer)
     int current_worker = 0;
     while (1) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
-        
-        // 1. Accept Connection
+
         int client_fd = accept(server_socket, (struct sockaddr *)&client_addr, &client_len);
         if (client_fd < 0) continue;
 
-        // 2. Send FD to Worker (Round Robin)
         send_fd(worker_pipes[current_worker], client_fd);
-        
-        // 3. Close in Master (Worker has a copy now)
+
         close(client_fd);
 
         current_worker = (current_worker + 1) % config.num_workers;
