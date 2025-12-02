@@ -43,6 +43,11 @@ void init_shared_queue(int max_queue_size)
     }
     pthread_mutexattr_destroy(&mutex_attr);
 
+    if (sem_init(&queue->log_mutex, 1, 1) != 0) {
+        perror("sem init log_mutex");
+        exit(1);
+    }
+    
     if (sem_init(&queue->empty_slots, 1, max_queue_size) != 0 ||
         sem_init(&queue->filled_slots, 1, 0) != 0) {
         perror("sem init");

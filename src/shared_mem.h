@@ -14,6 +14,8 @@ typedef struct
     sem_t empty_slots;
     sem_t filled_slots;
     pthread_mutex_t mutex;
+
+    sem_t log_mutex;
 } connection_queue_t;
 
 typedef struct

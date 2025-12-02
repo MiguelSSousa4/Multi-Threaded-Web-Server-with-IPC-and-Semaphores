@@ -1,7 +1,8 @@
-#define _POSIX_C_SOURCE 199309L 
+#define _POSIX_C_SOURCE 199309L // Required for CLOCK_MONOTONIC
 
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>  // Required for inet_ntop
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -9,32 +10,55 @@
 #include <sys/stat.h>
 #include <pthread.h>
 #include <time.h> 
+
 #include "http.h"
 #include "config.h"
 #include "shared_mem.h"
 #include "ipc.h"
+#include "logger.h" // Feature 5: Logging
 
 extern server_config_t config;
 extern connection_queue_t *queue;
+// stats is defined in shared_mem.c and declared extern in shared_mem.h
+// If your shared_mem.h does not have it, uncomment the line below:
+// extern server_stats_t *stats; 
 
 extern int enqueue(int client_socket);
 extern int dequeue();
 extern void send_http_response(int fd, int status, const char *status_msg, 
                                const char *content_type, const char *body, size_t body_len);
 
+// Helper: Calculate time difference in milliseconds
 long get_time_diff_ms(struct timespec start, struct timespec end) {
     return (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
+}
+
+// Helper: Get Client IP address string
+void get_client_ip(int client_fd, char *ip_buffer, size_t buffer_len) {
+    struct sockaddr_in addr;
+    socklen_t addr_len = sizeof(addr);
+    if (getpeername(client_fd, (struct sockaddr *)&addr, &addr_len) == 0) {
+        inet_ntop(AF_INET, &addr.sin_addr, ip_buffer, buffer_len);
+    } else {
+        strncpy(ip_buffer, "unknown", buffer_len);
+    }
 }
 
 const char *get_mime_type(const char *path)
 {
     const char *ext = strrchr(path, '.');
-    if (!ext) return "application/octet-stream";
-    if (strcmp(ext, ".html") == 0) return "text/html";
-    if (strcmp(ext, ".css") == 0) return "text/css";
-    if (strcmp(ext, ".js") == 0) return "application/javascript";
-    if (strcmp(ext, ".png") == 0) return "image/png";
-    if (strcmp(ext, ".jpg") == 0 || strcmp(ext, ".jpeg") == 0) return "image/jpeg";
+    if (!ext)
+        return "application/octet-stream";
+    if (strcmp(ext, ".html") == 0)
+        return "text/html";
+    if (strcmp(ext, ".css") == 0)
+        return "text/css";
+    if (strcmp(ext, ".js") == 0)
+        return "application/javascript";
+    if (strcmp(ext, ".png") == 0)
+        return "image/png";
+    if (strcmp(ext, ".jpg") == 0 || strcmp(ext, ".jpeg") == 0)
+        return "image/jpeg";
     return "application/octet-stream";
 }
 
@@ -43,20 +67,27 @@ void handle_client(int client_socket)
     struct timespec start_time, end_time;
     clock_gettime(CLOCK_MONOTONIC, &start_time);
 
+    // 1. Feature 3: Track Active Connections
     sem_wait(&stats->mutex);
     stats->active_connections++;
     sem_post(&stats->mutex);
 
+    // 2. Feature 5: Get Client IP
+    char client_ip[INET_ADDRSTRLEN];
+    get_client_ip(client_socket, client_ip, sizeof(client_ip));
+
     char buffer[2048];
     ssize_t bytes = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
 
+    // Variables for stats and logging
     int status_code = 0;
     long bytes_sent = 0;
+    http_request_t req = {0}; // Init to zero
 
     if (bytes <= 0)
     {
         close(client_socket);
-
+        // Decrement Active Connections immediately since we return early
         sem_wait(&stats->mutex);
         stats->active_connections--;
         sem_post(&stats->mutex);
@@ -64,7 +95,6 @@ void handle_client(int client_socket)
     }
     buffer[bytes] = '\0';
 
-    http_request_t req;
     if (parse_http_request(buffer, &req) != 0)
     {
         status_code = 400;
@@ -73,7 +103,7 @@ void handle_client(int client_socket)
         send_http_response(client_socket, 400, "Bad Request", "text/html", body, len);
         bytes_sent = len; 
         close(client_socket);
-        goto update_stats;
+        goto update_stats_and_log;
     }
 
     int is_head = (strcmp(req.method, "HEAD") == 0);
@@ -85,7 +115,7 @@ void handle_client(int client_socket)
         send_http_response(client_socket, 405, "Method Not Allowed", "text/html", body, len);
         bytes_sent = len;
         close(client_socket);
-        goto update_stats;
+        goto update_stats_and_log;
     }
 
     if (strstr(req.path, ".."))
@@ -96,7 +126,7 @@ void handle_client(int client_socket)
         send_http_response(client_socket, 403, "Forbidden", "text/html", body, len);
         bytes_sent = len;
         close(client_socket);
-        goto update_stats;
+        goto update_stats_and_log;
     }
 
     char full_path[1024];
@@ -117,7 +147,7 @@ void handle_client(int client_socket)
         send_http_response(client_socket, 404, "Not Found", "text/html", body, len);
         bytes_sent = len;
         close(client_socket);
-        goto update_stats;
+        goto update_stats_and_log;
     }
 
     fseek(fp, 0, SEEK_END);
@@ -134,7 +164,7 @@ void handle_client(int client_socket)
         send_http_response(client_socket, 500, "Internal Server Error", "text/html", body, len);
         bytes_sent = len;
         close(client_socket);
-        goto update_stats;
+        goto update_stats_and_log;
     }
 
     size_t read_bytes = fread(content, 1, fsize, fp);
@@ -148,7 +178,7 @@ void handle_client(int client_socket)
         send_http_response(client_socket, 500, "Internal Server Error", "text/html", body, len);
         bytes_sent = len;
         close(client_socket);
-        goto update_stats;
+        goto update_stats_and_log;
     }
 
     const char *mime = get_mime_type(full_path);
@@ -167,10 +197,11 @@ void handle_client(int client_socket)
     free(content);
     close(client_socket);
 
-update_stats:
+update_stats_and_log:
     clock_gettime(CLOCK_MONOTONIC, &end_time);
     long elapsed_ms = get_time_diff_ms(start_time, end_time);
 
+    // 3. Feature 3: Update Shared Statistics
     sem_wait(&stats->mutex);
     stats->active_connections--;
     stats->total_requests++;
@@ -182,6 +213,13 @@ update_stats:
     else if (status_code == 500) stats->status_500++;
     
     sem_post(&stats->mutex);
+
+    // 4. Feature 5: Log Request
+    // Ensure method/path are not NULL if parsing failed early
+    const char *log_method = (req.method[0] != '\0') ? req.method : "-";
+    const char *log_path = (req.path[0] != '\0') ? req.path : "-";
+    
+    log_request(&queue->log_mutex, client_ip, log_method, log_path, status_code, bytes_sent);
 }
 
 void *worker_thread(void *arg)
@@ -189,7 +227,10 @@ void *worker_thread(void *arg)
     (void)arg;
     while (1)
     {
+        // 1. Dequeue (Blocks until Main Thread pushes a connection)
         int client_socket = dequeue();
+
+        // 2. Handle
         handle_client(client_socket);
     }
     return NULL;
@@ -201,6 +242,12 @@ void start_worker_process(int ipc_socket)
     
     init_shared_queue(config.max_queue_size);
     
+    // Feature 5: Start the Logger Flush Thread
+    pthread_t flush_tid;
+    if (pthread_create(&flush_tid, NULL, logger_flush_thread, (void *)&queue->log_mutex) != 0) {
+        perror("Failed to create logger flush thread");
+    }
+
     pthread_t *threads = malloc(sizeof(pthread_t) * config.threads_per_worker);
     for (int i = 0; i < config.threads_per_worker; i++) {
         pthread_create(&threads[i], NULL, worker_thread, NULL);
@@ -208,22 +255,23 @@ void start_worker_process(int ipc_socket)
 
     while (1)
     {
-
+        // 1. Receive the FD from Master via IPC
         int client_fd = recv_fd(ipc_socket);
-        if (client_fd < 0) break; 
+        if (client_fd < 0) break; // Master died or error
 
+        // 2. Try to Enqueue
         if (enqueue(client_fd) != 0) {
-
+            // 3. QUEUE FULL: Reject client
             fprintf(stderr, "[Worker %d] Queue full! Rejecting client.\n", getpid());
             
             const char *error_body = "<h1>503 Service Unavailable</h1>Server too busy.\n";
             send_http_response(client_fd, 503, "Service Unavailable", 
                                "text/html", error_body, strlen(error_body));
             
-
+            // Critical: Close the socket immediately so the client isn't left hanging
             close(client_fd);
         }
-
+        // Else: Successfully queued, a thread will pick it up
     }
     
     free(threads);
