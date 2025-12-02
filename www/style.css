@@ -1,0 +1,80 @@
+body {
+    margin: 0;
+    padding: 0;
+    background: linear-gradient(135deg, #ff9a9e 0%, #fad0c4 99%, #fad0c4 100%);
+    height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+.container {
+    perspective: 1000px;
+}
+
+.card {
+    background: white;
+    padding: 40px;
+    border-radius: 20px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    text-align: center;
+    max-width: 400px;
+    animation: float 3s ease-in-out infinite;
+}
+
+h1 {
+    color: #ff4757;
+    font-size: 24px;
+    margin-bottom: 10px;
+}
+
+p {
+    color: #57606f;
+    line-height: 1.6;
+}
+
+.clown-nose {
+    width: 50px;
+    height: 50px;
+    background: radial-gradient(circle at 30% 30%, #ff6b81, #c4001d);
+    border-radius: 50%;
+    margin: 0 auto 20px auto;
+    box-shadow: 0 5px 15px rgba(196, 0, 29, 0.4);
+}
+
+button {
+    background-color: #2ed573;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 50px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: transform 0.1s, background-color 0.3s;
+    margin-top: 20px;
+}
+
+button:hover {
+    background-color: #26af61;
+    transform: scale(1.05);
+}
+
+button:active {
+    transform: scale(0.95);
+}
+
+.status-box {
+    margin-top: 15px;
+    padding: 10px;
+    background: #f1f2f6;
+    border-radius: 8px;
+    font-weight: bold;
+    color: #2f3542;
+}
+
+@keyframes float {
+    0% { transform: translateY(0px); }
+    50% { transform: translateY(-10px); }
+    100% { transform: translateY(0px); }
+}

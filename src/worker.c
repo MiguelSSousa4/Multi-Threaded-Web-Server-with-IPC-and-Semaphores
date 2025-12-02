@@ -1,4 +1,5 @@
 #include <sys/socket.h>
+#include <netinet/in.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -8,9 +9,15 @@
 #include "http.h"
 #include "config.h"
 #include "shared_mem.h"
-#include "semaphores.h"
+#include "ipc.h"
 
 extern server_config_t config;
+extern connection_queue_t *queue;
+
+extern int enqueue(int client_socket);
+extern int dequeue();
+extern void send_http_response(int fd, int status, const char *status_msg, 
+                               const char *content_type, const char *body, size_t body_len);
 
 const char *get_mime_type(const char *path)
 {
@@ -123,17 +130,46 @@ void *worker_thread(void *arg)
     (void)arg;
     while (1)
     {
+        // 1. Dequeue (Blocks until Main Thread pushes a connection)
+        int client_socket = dequeue();
 
-        sem_wait(&filled_slots);
-
-        pthread_mutex_lock(&mutex);
-        int client_socket = queue->connections[queue->head];
-        queue->head = (queue->head + 1) % queue->max_size;
-        pthread_mutex_unlock(&mutex);
-
-        sem_post(&empty_slots);
-
+        // 2. Handle
         handle_client(client_socket);
     }
     return NULL;
+}
+
+void start_worker_process(int ipc_socket)
+{
+    printf("Worker (PID: %d) started\n", getpid());
+    
+    init_shared_queue(config.max_queue_size);
+    
+    pthread_t *threads = malloc(sizeof(pthread_t) * config.threads_per_worker);
+    for (int i = 0; i < config.threads_per_worker; i++) {
+        pthread_create(&threads[i], NULL, worker_thread, NULL);
+    }
+
+    while (1)
+    {
+        // 1. Receive the FD from Master via IPC
+        int client_fd = recv_fd(ipc_socket);
+        if (client_fd < 0) break; // Master died or error
+
+        // 2. Try to Enqueue
+        if (enqueue(client_fd) != 0) {
+            // 3. QUEUE FULL: Reject client
+            fprintf(stderr, "[Worker %d] Queue full! Rejecting client.\n", getpid());
+            
+            const char *error_body = "<h1>503 Service Unavailable</h1>Server too busy.\n";
+            send_http_response(client_fd, 503, "Service Unavailable", 
+                               "text/html", error_body, strlen(error_body));
+            
+            // Critical: Close the socket immediately so the client isn't left hanging
+            close(client_fd);
+        }
+        // Else: Successfully queued, a thread will pick it up
+    }
+    
+    free(threads);
 }

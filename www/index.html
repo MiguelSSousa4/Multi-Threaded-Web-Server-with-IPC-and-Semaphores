@@ -1,8 +1,31 @@
-<!DOCTYPE html> 
-    <head>
-        <meta charset="UTF-8">
-        <title>WebPage</title>
-    </head>
-    <body>
-        <h1>O Seba é um palhaço</h1>
-    </body>
+<!DOCTYPE html>
+<html lang="pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Margarida's Circus Server</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* Fallback CSS in case your server fails to load style.css */
+        body { font-family: sans-serif; background: #f0f0f0; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="card">
+            <div class="clown-nose"></div>
+            <h1>A Margarida é uma palhaça 🤡</h1>
+            <p>Se você consegue ver esta página bonita, o seu servidor <strong>Multithread</strong> está a funcionar!</p>
+            
+            <div class="status-box">
+                Status do Servidor: <span id="status">Online</span>
+            </div>
+
+            <button onclick="honk()">Buzinar! (Teste JS)</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

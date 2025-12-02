@@ -1,76 +1,77 @@
-
 #include "shared_mem.h"
-#include "semaphores.h"
 #include "config.h"
+#include "ipc.h"  
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
 #include <stdio.h>
-#include <pthread.h>
 #include <stdlib.h>
+#include <sys/wait.h>
 
 server_config_t config;
 
-extern void *worker_thread(void *);
+
+extern void start_worker_process(int ipc_socket); 
 
 int main()
 {
-
-    if (load_config("server.conf", &config) != 0)
-    {
-        fprintf(stderr, "Failed to load config\n");
-        return 1;
-    }
+    if (load_config("server.conf", &config) != 0) return 1;
 
     int server_socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (server_socket < 0)
-    {
-        perror("socket");
-        return 1;
-    }
+    int opt = 1;
+    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     struct sockaddr_in address;
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(config.port);
 
-    if (bind(server_socket, (struct sockaddr *)&address, sizeof(address)) < 0)
-    {
-        perror("bind");
-        return 1;
-    }
+    bind(server_socket, (struct sockaddr *)&address, sizeof(address));
     listen(server_socket, 128);
 
-    init_shared_queue(config.max_queue_size);
-    init_semaphores(config.max_queue_size);
+    printf("Master (PID: %d) listening. Forking %d workers...\n", getpid(), config.num_workers);
 
-    pthread_t workers[config.num_workers];
+
+    int *worker_pipes = malloc(sizeof(int) * config.num_workers);
+
     for (int i = 0; i < config.num_workers; i++)
     {
-        pthread_create(&workers[i], NULL, worker_thread, NULL);
-    }
-
-    while (1)
-    {
-        int client_socket = accept(server_socket, NULL, NULL);
-        if (client_socket < 0)
-            continue;
-
-        if (sem_trywait(&empty_slots) != 0)
-        {
-            send(client_socket, "HTTP/1.1 503 Service Unavailable\r\n\r\n", 36, 0);
-            close(client_socket);
-            continue;
+        int sv[2]; 
+        if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) < 0) {
+            perror("socketpair");
+            exit(1);
         }
 
-        pthread_mutex_lock(&mutex);
-        queue->connections[queue->tail] = client_socket;
-        queue->tail = (queue->tail + 1) % queue->max_size;
-        pthread_mutex_unlock(&mutex);
-
-        sem_post(&filled_slots);
+        pid_t pid = fork();
+        if (pid == 0) {
+            close(server_socket); 
+            close(sv[0]); 
+            start_worker_process(sv[1]); 
+            exit(0);
+        }
+        
+        close(sv[1]); 
+        worker_pipes[i] = sv[0]; 
     }
 
-    close(server_socket);
+    // MASTER LOOP (Producer)
+    int current_worker = 0;
+    while (1) {
+        struct sockaddr_in client_addr;
+        socklen_t client_len = sizeof(client_addr);
+        
+        // 1. Accept Connection
+        int client_fd = accept(server_socket, (struct sockaddr *)&client_addr, &client_len);
+        if (client_fd < 0) continue;
+
+        // 2. Send FD to Worker (Round Robin)
+        send_fd(worker_pipes[current_worker], client_fd);
+        
+        // 3. Close in Master (Worker has a copy now)
+        close(client_fd);
+
+        current_worker = (current_worker + 1) % config.num_workers;
+    }
+
     return 0;
 }
