@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <time.h>
 #include "config.h"
 #include "logger.h"
 #include "shared_mem.h"
@@ -16,6 +17,8 @@ extern connection_queue_t *queue;
 void start_worker_process(int ipc_socket)
 {
     printf("Worker (PID: %d) started\n", getpid());
+
+    tzset();
     
     init_shared_queue(config.max_queue_size);
 
