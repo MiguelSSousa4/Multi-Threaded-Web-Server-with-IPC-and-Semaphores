@@ -18,18 +18,16 @@ void check_and_rotate_log()
     {
         if (st.st_size >= MAX_LOG_FILE_SIZE)
         {
-
             rename("access.log", "access.log.old");
         }
     }
 }
 
-void flush_buffer_to_disk(sem_t *log_sem)
+// NOTE: This function now expects the caller to hold the lock!
+void flush_buffer_to_disk_internal()
 {
     if (buffer_offset == 0) return; 
 
-    sem_wait(log_sem);
-    
     check_and_rotate_log();
 
     FILE *fp = fopen("access.log", "a");
@@ -39,18 +37,28 @@ void flush_buffer_to_disk(sem_t *log_sem)
         fclose(fp);
     }
 
-    sem_post(log_sem);
-
     buffer_offset = 0;
+}
+
+// Public wrapper for flushing (used by thread)
+void flush_logger(sem_t *log_sem)
+{
+    sem_wait(log_sem);
+    flush_buffer_to_disk_internal();
+    sem_post(log_sem);
 }
 
 void log_request(sem_t *log_sem, const char *client_ip, const char *method,
                  const char *path, int status, size_t bytes)
 {
     time_t now = time(NULL);
-    struct tm *tm_info = localtime(&now);
+    struct tm tm_info;
+    
+    // FIX 1: Use localtime_r (Thread Safe) instead of localtime
+    localtime_r(&now, &tm_info);
+    
     char timestamp[64];
-    strftime(timestamp, sizeof(timestamp), "%d/%b/%Y:%H:%M:%S %z", tm_info);
+    strftime(timestamp, sizeof(timestamp), "%d/%b/%Y:%H:%M:%S %z", &tm_info);
 
     char entry[512];
     int len = snprintf(entry, sizeof(entry), "%s - - [%s] \"%s %s HTTP/1.1\" %d %zu\n",
@@ -58,18 +66,27 @@ void log_request(sem_t *log_sem, const char *client_ip, const char *method,
 
     if (len < 0) return;
 
+    // FIX 2: Critical Section starts HERE. 
+    // We must lock before reading/writing buffer_offset or log_buffer.
+    sem_wait(log_sem);
+
     if (buffer_offset + len >= LOG_BUFFER_SIZE)
     {
-        flush_buffer_to_disk(log_sem);
+        // We already hold the lock, so we call the internal flush directly
+        flush_buffer_to_disk_internal();
     }
 
     memcpy(log_buffer + buffer_offset, entry, len);
     buffer_offset += len;
+
+    sem_post(log_sem);
+    // FIX 2: Critical Section ends.
 }
 
-void flush_logger(sem_t *log_sem)
+// Kept for compatibility if called directly, but usually ignored in this design
+void flush_buffer_to_disk(sem_t *log_sem)
 {
-    flush_buffer_to_disk(log_sem);
+    flush_logger(log_sem);
 }
 
 void *logger_flush_thread(void *arg)

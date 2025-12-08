@@ -227,7 +227,7 @@ void handle_client(int client_socket)
     status_code = 200;
     if (is_head)
     {
-        send_http_response(client_socket, 200, "OK", mime, NULL, 0);
+        send_http_response(client_socket, 200, "OK", mime, NULL, fsize);
         bytes_sent = 0;
     }
     else

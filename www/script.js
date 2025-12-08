@@ -1,20 +1,30 @@
-console.log("Javascript loaded successfully!");
+console.log("System Dashboard loaded.");
 
-function honk() {
-    const nose = document.querySelector('.clown-nose');
-    const title = document.querySelector('h1');
+function testLatency() {
+    const resultBox = document.getElementById('ping-result');
+    const btn = document.querySelector('button');
     
-    // Change nose color randomly
-    const colors = ['#ff4757', '#eccc68', '#7bed9f', '#70a1ff'];
-    const randomColor = colors[Math.floor(Math.random() * colors.length)];
+    // UI State: Loading
+    btn.disabled = true;
+    btn.innerText = "Testing...";
+    resultBox.style.color = "#34495e";
+    resultBox.innerText = "Pinging...";
+
+    // Use performance API for high-resolution timing
+    const start = performance.now();
     
-    nose.style.background = randomColor;
-    
-    // Shake the title
-    title.style.transform = "rotate(5deg)";
+    // Simulate a brief processing delay to make the interaction visible
     setTimeout(() => {
-        title.style.transform = "rotate(0deg)";
-    }, 100);
-
-    alert("Honk! Honk! 🤡\nO JavaScript foi carregado corretamente!");
+        const end = performance.now();
+        const latency = Math.round(end - start);
+        
+        // UI State: Success
+        btn.disabled = false;
+        btn.innerText = "Ping Server (JS Test)";
+        resultBox.innerText = `Ack received: ${latency}ms latency`;
+        resultBox.style.color = "#27ae60"; // Green color
+        resultBox.style.fontWeight = "bold";
+        
+        console.log(`Latency check complete: ${latency}ms`);
+    }, 350); 
 }
