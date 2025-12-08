@@ -86,7 +86,11 @@ void *logger_flush_thread(void *arg)
     sem_t *log_sem = (sem_t *)arg;
     while (!logger_shutting_down)
     {
-        sleep(5);
+        for (int i = 0; i < 5; i++) {
+            if (logger_shutting_down) break;
+            sleep(1); 
+        }
+
         flush_logger(log_sem);
     }
 

@@ -5,14 +5,6 @@
 #include <stdio.h>
 #include <bits/pthreadtypes.h>
 
-typedef struct cache_node {
-    char *path;
-    char *data;
-    size_t len;
-    struct cache_node *prev, *next;
-    struct cache_node *hnext; 
-} cache_node_t;
-
 static cache_node_t **htable = NULL;
 static size_t hsize = 0;
 static cache_node_t *head = NULL; 

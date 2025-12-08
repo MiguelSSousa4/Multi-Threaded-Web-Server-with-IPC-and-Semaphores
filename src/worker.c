@@ -143,7 +143,6 @@ void handle_client(int client_socket)
 
     if (fsize > 0 && fsize < (1 * 1024 * 1024)) {
         if (cache_get(full_path, &content, &read_bytes) == 0) {
-
         } else {
             FILE *fp = fopen(full_path, "rb");
             if (!fp) {

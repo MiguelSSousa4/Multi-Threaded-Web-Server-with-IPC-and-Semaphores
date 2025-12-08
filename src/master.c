@@ -1,5 +1,7 @@
+
 #define _XOPEN_SOURCE 700
 
+#include "master.h"    
 #include "shared_mem.h"
 #include "config.h"
 #include "ipc.h"
@@ -13,29 +15,26 @@
 #include <stdlib.h>
 #include <sys/wait.h>
 #include <pthread.h> 
-#include <signal.h>  
+#include <signal.h>
 #include <errno.h>
 
-server_config_t config;
+extern server_config_t config;
 
-volatile sig_atomic_t server_running = 1;
+static volatile sig_atomic_t server_running = 1;
 
 void handle_sigint(int sig) {
     (void)sig;
-    server_running = 0;
+    server_running = 0; 
 }
 
-int main()
+int start_master_server()
 {
-    if (load_config("server.conf", &config) != 0) return 1;
 
     struct sigaction sa;
     sa.sa_handler = handle_sigint;
     sigemptyset(&sa.sa_mask);
     sa.sa_flags = 0;
     sigaction(SIGINT, &sa, NULL);
-
-    init_shared_stats();
 
     int server_socket = socket(AF_INET, SOCK_STREAM, 0);
     int opt = 1;
@@ -44,7 +43,7 @@ int main()
     struct sockaddr_in address;
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(config.port);
+    address.sin_port = htons(config.port); 
 
     bind(server_socket, (struct sockaddr *)&address, sizeof(address));
     listen(server_socket, 128);
@@ -67,9 +66,7 @@ int main()
         if (pid == 0) {
             close(server_socket); 
             close(sv[0]); 
-
             signal(SIGINT, SIG_IGN); 
-
             start_worker_process(sv[1]); 
             exit(0);
         }
