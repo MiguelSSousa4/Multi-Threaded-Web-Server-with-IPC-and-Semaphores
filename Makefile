@@ -17,7 +17,11 @@ run: $(TARGET)
 	./$(TARGET)
 
 clean:
-	rm -f $(OBJ) $(TARGET)
+	rm -f $(OBJ) $(TARGET) *.log
 
-.PHONY: all clean run
+test: $(TARGET)
+	chmod +x tests/test_load.sh
+	./tests/test_load.sh
+
+.PHONY: all clean run test
 
