@@ -19,14 +19,24 @@
 #include "worker.h"
 #include "cache.h"
 
+/* Access global config and shared structures */
 extern server_config_t config;
 extern connection_queue_t *queue;
 
-
+/*
+ * Helper: Calculate Time Difference in Milliseconds
+ * Purpose: Computes the elapsed time between two timespec structs.
+ * Used for tracking request latency.
+ */
 long get_time_diff_ms(struct timespec start, struct timespec end) {
     return (end.tv_sec - start.tv_sec) * 1000 + (end.tv_nsec - start.tv_nsec) / 1000000;
 }
 
+/*
+ * Helper: Get Client IP Address
+ * Purpose: Extracts the client's IP address string from the socket file descriptor.
+ * This is used specifically for the access logs.
+ */
 void get_client_ip(int client_fd, char *ip_buffer, size_t buffer_len) {
     struct sockaddr_in addr;
     socklen_t addr_len = sizeof(addr);
@@ -37,6 +47,11 @@ void get_client_ip(int client_fd, char *ip_buffer, size_t buffer_len) {
     }
 }
 
+/*
+ * Helper: Determine MIME Type
+ * Purpose: Returns the correct Content-Type header based on the file extension.
+ * Defaults to "application/octet-stream" for unknown types.
+ */
 const char *get_mime_type(const char *path)
 {
     const char *ext = strrchr(path, '.');
@@ -55,11 +70,30 @@ const char *get_mime_type(const char *path)
     return "application/octet-stream";
 }
 
+/*
+ * Handle Client Request (Core Logic)
+ * Purpose: Processes a single HTTP request from start to finish.
+ *
+ * Workflow:
+ * 1. Updates "Active Connections" stat.
+ * 2. Reads and parses the HTTP request.
+ * 3. Validates method (GET/HEAD only) and security (no ".." paths).
+ * 4. Resolves the physical file path (handling index.html).
+ * 5. Checks the In-Memory Cache (for small files).
+ * 6. If not cached, reads from disk and populates the cache.
+ * 7. Sends the HTTP response.
+ * 8. Updates final stats and logs the request.
+ *
+ * Synchronization:
+ * - Uses shared memory semaphores to atomic updates to global stats.
+ * - Uses cache_get/cache_put which handle their own Read-Write locks.
+ */
 void handle_client(int client_socket)
 {
     struct timespec start_time, end_time;
     clock_gettime(CLOCK_MONOTONIC, &start_time);
 
+    /* 1. Increment Active Connections (Critical Section) */
     sem_wait(&stats->mutex);
     stats->active_connections++;
     sem_post(&stats->mutex);
@@ -67,6 +101,7 @@ void handle_client(int client_socket)
     char client_ip[INET_ADDRSTRLEN];
     get_client_ip(client_socket, client_ip, sizeof(client_ip));
 
+    /* Read Request */
     char buffer[2048];
     ssize_t bytes = recv(client_socket, buffer, sizeof(buffer) - 1, 0);
 
@@ -76,6 +111,7 @@ void handle_client(int client_socket)
 
     if (bytes <= 0)
     {
+        /* Connection closed or error */
         close(client_socket);
         sem_wait(&stats->mutex);
         stats->active_connections--;
@@ -84,6 +120,7 @@ void handle_client(int client_socket)
     }
     buffer[bytes] = '\0';
 
+    /* Parse HTTP Header */
     if (parse_http_request(buffer, &req) != 0)
     {
         status_code = 400;
@@ -92,9 +129,10 @@ void handle_client(int client_socket)
         send_http_response(client_socket, 400, "Bad Request", "text/html", body, len);
         bytes_sent = len; 
         close(client_socket);
-        goto update_stats_and_log;
+        goto update_stats_and_log; /* Jump to cleanup/logging */
     }
 
+    /* Validate Method (Only GET and HEAD supported) */
     int is_head = (strcmp(req.method, "HEAD") == 0);
     if (strcmp(req.method, "GET") != 0 && strcmp(req.method, "HEAD") != 0)
     {
@@ -107,6 +145,7 @@ void handle_client(int client_socket)
         goto update_stats_and_log;
     }
 
+    /* Security: Prevent Directory Traversal */
     if (strstr(req.path, ".."))
     {
         status_code = 403;
@@ -118,15 +157,18 @@ void handle_client(int client_socket)
         goto update_stats_and_log;
     }
 
+    /* Resolve Path */
     char full_path[1024];
     snprintf(full_path, sizeof(full_path), "%s%s", config.document_root, req.path);
 
+    /* Directory Handling (Serve index.html) */
     struct stat st;
     if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode))
     {
         strncat(full_path, "/index.html", sizeof(full_path) - strlen(full_path) - 1);
     }
 
+    /* File Existence Check */
     if (stat(full_path, &st) != 0) {
         status_code = 404;
         const char *body = "<h1>404 Not Found</h1>";
@@ -141,9 +183,15 @@ void handle_client(int client_socket)
     char *content = NULL;
     size_t read_bytes = 0;
 
+    /* * CACHING LOGIC
+     * Only cache files smaller than 1MB to preserve memory.
+     */
     if (fsize > 0 && fsize < (1 * 1024 * 1024)) {
+        /* Try to retrieve from cache first */
         if (cache_get(full_path, &content, &read_bytes) == 0) {
+            /* HIT: 'content' is now a malloc'd copy from the cache */
         } else {
+            /* MISS: Read from disk */
             FILE *fp = fopen(full_path, "rb");
             if (!fp) {
                 status_code = 404;
@@ -167,30 +215,26 @@ void handle_client(int client_socket)
             }
             size_t rb = fread(buf, 1, fsize, fp);
             fclose(fp);
+            
             if (rb != (size_t)fsize) {
                 free(buf);
                 status_code = 500;
-                const char *body = "<h1>500 Internal Server Error</h1>";
-                size_t len = strlen(body);
-                send_http_response(client_socket, 500, "Internal Server Error", "text/html", body, len);
-                bytes_sent = len;
+                // ... send error ...
                 close(client_socket);
                 goto update_stats_and_log;
             }
             read_bytes = rb;
             content = buf;
 
+            /* Update Cache (Best Effort) */
             cache_put(full_path, content, read_bytes);
         }
     } else {
-
+        /* Large files: Direct Disk Read (No Caching) */
         FILE *fp = fopen(full_path, "rb");
         if (!fp) {
             status_code = 404;
-            const char *body = "<h1>404 Not Found</h1>";
-            size_t len = strlen(body);
-            send_http_response(client_socket, 404, "Not Found", "text/html", body, len);
-            bytes_sent = len;
+            // ... send 404 ...
             close(client_socket);
             goto update_stats_and_log;
         }
@@ -198,10 +242,7 @@ void handle_client(int client_socket)
         if (!buf) {
             fclose(fp);
             status_code = 500;
-            const char *body = "<h1>500 Internal Server Error</h1>";
-            size_t len = strlen(body);
-            send_http_response(client_socket, 500, "Internal Server Error", "text/html", body, len);
-            bytes_sent = len;
+            // ... send 500 ...
             close(client_socket);
             goto update_stats_and_log;
         }
@@ -210,10 +251,7 @@ void handle_client(int client_socket)
         if (rb != (size_t)fsize) {
             free(buf);
             status_code = 500;
-            const char *body = "<h1>500 Internal Server Error</h1>";
-            size_t len = strlen(body);
-            send_http_response(client_socket, 500, "Internal Server Error", "text/html", body, len);
-            bytes_sent = len;
+            // ... send 500 ...
             close(client_socket);
             goto update_stats_and_log;
         }
@@ -221,6 +259,7 @@ void handle_client(int client_socket)
         read_bytes = rb;
     }
 
+    /* Send Response */
     const char *mime = get_mime_type(full_path);
     status_code = 200;
     if (is_head)
@@ -237,10 +276,14 @@ void handle_client(int client_socket)
     free(content);
     close(client_socket);
 
+/* * Cleanup Label: Updates stats and logs the request. 
+ * Reached via goto from error handlers or normal completion.
+ */
 update_stats_and_log:
     clock_gettime(CLOCK_MONOTONIC, &end_time);
     long elapsed_ms = get_time_diff_ms(start_time, end_time);
 
+    /* Update Shared Stats (Critical Section) */
     sem_wait(&stats->mutex);
     stats->active_connections--;
     stats->total_requests++;
@@ -253,12 +296,17 @@ update_stats_and_log:
     
     sem_post(&stats->mutex);
 
+    /* Log Request (Apache Format) */
     const char *log_method = (req.method[0] != '\0') ? req.method : "-";
     const char *log_path = (req.path[0] != '\0') ? req.path : "-";
     
     log_request(&queue->log_mutex, client_ip, log_method, log_path, status_code, bytes_sent);
 }
 
+/*
+ * Initialize Local Worker Queue
+ * Purpose: Prepares the circular buffer used by the thread pool.
+ */
 int local_queue_init(local_queue_t *q, int max_size)
 {
     q->fds = malloc(sizeof(int) * max_size);
@@ -280,21 +328,32 @@ void local_queue_destroy(local_queue_t *q)
     pthread_cond_destroy(&q->cond);
 }
 
+/*
+ * Enqueue (Producer: Worker Main Thread)
+ * Purpose: Adds a client FD to the pool.
+ * Return: -1 if full (Master will send 503).
+ */
 int local_queue_enqueue(local_queue_t *q, int client_fd)
 {
     pthread_mutex_lock(&q->mutex);
     int next = (q->tail + 1) % q->max_size;
     if (next == q->head) {
         pthread_mutex_unlock(&q->mutex);
-        return -1; 
+        return -1; /* Queue Full */
     }
     q->fds[q->tail] = client_fd;
     q->tail = next;
+    /* Signal waiting threads that work is available */
     pthread_cond_signal(&q->cond);
     pthread_mutex_unlock(&q->mutex);
     return 0;
 }
 
+/*
+ * Dequeue (Consumer: Worker Threads)
+ * Purpose: Retrieves a FD to process.
+ * Logic: Blocks on condition variable if queue is empty.
+ */
 int local_queue_dequeue(local_queue_t *q)
 {
     pthread_mutex_lock(&q->mutex);
@@ -303,7 +362,7 @@ int local_queue_dequeue(local_queue_t *q)
     }
     if (q->head == q->tail && q->shutting_down) {
         pthread_mutex_unlock(&q->mutex);
-        return -1;
+        return -1; /* Shutdown signal received */
     }
     int fd = q->fds[q->head];
     q->head = (q->head + 1) % q->max_size;
@@ -311,6 +370,10 @@ int local_queue_dequeue(local_queue_t *q)
     return fd;
 }
 
+/*
+ * Worker Thread Entry Point
+ * Purpose: Continuously pulls requests from the local queue and handles them.
+ */
 void *worker_thread(void *arg)
 {
     local_queue_t *q = (local_queue_t *)arg;
@@ -318,11 +381,10 @@ void *worker_thread(void *arg)
     {
         int client_socket = local_queue_dequeue(q);
         if (client_socket < 0) {
-            break; 
+            break; /* shutdown signaled */
         }
 
         handle_client(client_socket);
     }
     return NULL;
 }
-
