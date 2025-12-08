@@ -77,8 +77,10 @@ void start_worker_process(int ipc_socket)
         }
     }
 
+    pthread_mutex_lock(&local_q.mutex); 
     local_q.shutting_down = 1;
     pthread_cond_broadcast(&local_q.cond);
+    pthread_mutex_unlock(&local_q.mutex);
 
     logger_request_shutdown();
     pthread_join(flush_tid, NULL);

@@ -101,6 +101,10 @@ int start_master_server()
 
     while (wait(NULL) > 0);
 
+    pthread_cancel(stats_tid);
+
+    pthread_join(stats_tid, NULL);
+
     free(worker_pipes);
     close(server_socket);
 
