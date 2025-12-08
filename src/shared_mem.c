@@ -32,6 +32,7 @@ void init_shared_queue(int max_queue_size)
     queue->head = 0;
     queue->tail = 0;
     queue->max_size = max_queue_size;
+    queue->shutting_down = 0;
 
     pthread_mutexattr_t mutex_attr;
     pthread_mutexattr_init(&mutex_attr);
@@ -83,6 +84,9 @@ void init_shared_stats()
 }
 
 int enqueue(int client_socket) {
+    if (queue->shutting_down) {
+        return -1;
+    }
 
     if (sem_trywait(&queue->empty_slots) != 0) {
         if (errno == EAGAIN) {
@@ -106,6 +110,12 @@ int enqueue(int client_socket) {
 int dequeue() {
     sem_wait(&queue->filled_slots);
     pthread_mutex_lock(&queue->mutex);
+
+    /* If shutting down and no real items, wake up and exit */
+    if (queue->shutting_down && queue->head == queue->tail) {
+        pthread_mutex_unlock(&queue->mutex);
+        return -1;
+    }
 
     int client_socket = queue->connections[queue->head];
     queue->head = (queue->head + 1) % queue->max_size;

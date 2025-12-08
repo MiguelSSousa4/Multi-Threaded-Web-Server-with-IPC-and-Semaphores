@@ -10,9 +10,38 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <sys/wait.h>
-#include <pthread.h> 
+#include <pthread.h>
+#include <signal.h>
+#include <sys/types.h>
 
 server_config_t config;
+
+/* Globals used by signal handler for graceful shutdown */
+volatile sig_atomic_t running = 1;
+int server_socket_fd = -1;
+int *g_worker_pipes = NULL;
+pid_t *g_worker_pids = NULL;
+int g_num_workers = 0;
+
+static void sigint_handler(int sig)
+{
+    (void)sig;
+    running = 0;
+    if (server_socket_fd >= 0) {
+        close(server_socket_fd);
+        server_socket_fd = -1;
+    }
+
+    /* Close master side of worker IPC sockets to notify workers */
+    if (g_worker_pipes) {
+        for (int i = 0; i < g_num_workers; i++) {
+            if (g_worker_pipes[i] >= 0) {
+                close(g_worker_pipes[i]);
+                g_worker_pipes[i] = -1;
+            }
+        }
+    }
+}
 
 int main()
 {
@@ -20,24 +49,45 @@ int main()
 
     init_shared_stats();
 
-    int server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    /* install signal handler for graceful shutdown */
+    struct sigaction sa;
+    sa.sa_handler = sigint_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, NULL);
+    sigaction(SIGTERM, &sa, NULL);
+
+    server_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
     int opt = 1;
-    setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(server_socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     struct sockaddr_in address;
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = INADDR_ANY;
     address.sin_port = htons(config.port);
 
-    bind(server_socket, (struct sockaddr *)&address, sizeof(address));
-    listen(server_socket, 128);
+    if (bind(server_socket_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("bind");
+        return 1;
+    }
+    if (listen(server_socket_fd, 128) < 0) {
+        perror("listen");
+        return 1;
+    }
 
     printf("Master (PID: %d) listening on port %d.\n", getpid(), config.port);
 
     pthread_t stats_tid;
     pthread_create(&stats_tid, NULL, stats_monitor_thread, NULL);
 
-    int *worker_pipes = malloc(sizeof(int) * config.num_workers);
+    g_num_workers = config.num_workers;
+    g_worker_pipes = malloc(sizeof(int) * config.num_workers);
+    g_worker_pids = malloc(sizeof(pid_t) * config.num_workers);
+    if (!g_worker_pipes || !g_worker_pids) {
+        perror("malloc");
+        return 1;
+    }
+
     for (int i = 0; i < config.num_workers; i++)
     {
         int sv[2]; 
@@ -48,30 +98,59 @@ int main()
 
         pid_t pid = fork();
         if (pid == 0) {
-            close(server_socket); 
+            /* child (worker) */
+            close(server_socket_fd); 
             close(sv[0]); 
 
             start_worker_process(sv[1]); 
             exit(0);
         }
         
+        /* parent (master) */
         close(sv[1]); 
-        worker_pipes[i] = sv[0]; 
+        g_worker_pipes[i] = sv[0]; 
+        g_worker_pids[i] = pid;
     }
 
-
     int current_worker = 0;
-    while (1) {
+    while (running) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);
 
-        int client_fd = accept(server_socket, (struct sockaddr *)&client_addr, &client_len);
-        if (client_fd < 0) continue;
+        int client_fd = accept(server_socket_fd, (struct sockaddr *)&client_addr, &client_len);
+        if (client_fd < 0) {
+            if (!running) break;
+            continue;
+        }
 
-        send_fd(worker_pipes[current_worker], client_fd);
-        close(client_fd);
-        current_worker = (current_worker + 1) % config.num_workers;
+        if (send_fd(g_worker_pipes[current_worker], client_fd) < 0) {
+            perror("send_fd");
+            close(client_fd);
+        } else {
+            close(client_fd);
+            current_worker = (current_worker + 1) % config.num_workers;
+        }
     }
+
+    /* master shutting down: close any remaining worker IPC sockets (handler may have closed them already) */
+    if (g_worker_pipes) {
+        for (int i = 0; i < g_num_workers; i++) {
+            if (g_worker_pipes[i] >= 0) {
+                close(g_worker_pipes[i]);
+                g_worker_pipes[i] = -1;
+            }
+        }
+    }
+
+    /* Wait for child workers to exit */
+    for (int i = 0; i < g_num_workers; i++) {
+        if (g_worker_pids[i] > 0) {
+            waitpid(g_worker_pids[i], NULL, 0);
+        }
+    }
+
+    free(g_worker_pipes);
+    free(g_worker_pids);
 
     return 0;
 }

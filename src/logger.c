@@ -9,6 +9,7 @@
 
 static char log_buffer[LOG_BUFFER_SIZE];
 static size_t buffer_offset = 0;
+static volatile int logger_shutting_down = 0;
 
 void check_and_rotate_log()
 {
@@ -74,10 +75,17 @@ void flush_logger(sem_t *log_sem)
 void *logger_flush_thread(void *arg)
 {
     sem_t *log_sem = (sem_t *)arg;
-    while (1)
+    while (!logger_shutting_down)
     {
-        sleep(5); 
+        sleep(5);
         flush_logger(log_sem);
     }
+    /* final flush on shutdown */
+    flush_logger(log_sem);
     return NULL;
+}
+
+void logger_request_shutdown()
+{
+    logger_shutting_down = 1;
 }

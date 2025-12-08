@@ -15,7 +15,9 @@
 #include "config.h"
 #include "shared_mem.h"
 #include "ipc.h"
-#include "logger.h" 
+#include "logger.h"
+#include "worker.h"
+#include "cache.h"
 
 extern server_config_t config;
 extern connection_queue_t *queue;
@@ -125,9 +127,7 @@ void handle_client(int client_socket)
         strncat(full_path, "/index.html", sizeof(full_path) - strlen(full_path) - 1);
     }
 
-    FILE *fp = fopen(full_path, "rb");
-    if (!fp)
-    {
+    if (stat(full_path, &st) != 0) {
         status_code = 404;
         const char *body = "<h1>404 Not Found</h1>";
         size_t len = strlen(body);
@@ -137,35 +137,90 @@ void handle_client(int client_socket)
         goto update_stats_and_log;
     }
 
-    fseek(fp, 0, SEEK_END);
-    long fsize = ftell(fp);
-    rewind(fp);
+    long fsize = st.st_size;
+    char *content = NULL;
+    size_t read_bytes = 0;
 
-    char *content = malloc(fsize);
-    if (!content)
-    {
+    /* Try per-worker cache for small files (<1MB) */
+    if (fsize > 0 && fsize < (1 * 1024 * 1024)) {
+        if (cache_get(full_path, &content, &read_bytes) == 0) {
+            /* served from cache */
+        } else {
+            FILE *fp = fopen(full_path, "rb");
+            if (!fp) {
+                status_code = 404;
+                const char *body = "<h1>404 Not Found</h1>";
+                size_t len = strlen(body);
+                send_http_response(client_socket, 404, "Not Found", "text/html", body, len);
+                bytes_sent = len;
+                close(client_socket);
+                goto update_stats_and_log;
+            }
+            char *buf = malloc(fsize);
+            if (!buf) {
+                fclose(fp);
+                status_code = 500;
+                const char *body = "<h1>500 Internal Server Error</h1>";
+                size_t len = strlen(body);
+                send_http_response(client_socket, 500, "Internal Server Error", "text/html", body, len);
+                bytes_sent = len;
+                close(client_socket);
+                goto update_stats_and_log;
+            }
+            size_t rb = fread(buf, 1, fsize, fp);
+            fclose(fp);
+            if (rb != (size_t)fsize) {
+                free(buf);
+                status_code = 500;
+                const char *body = "<h1>500 Internal Server Error</h1>";
+                size_t len = strlen(body);
+                send_http_response(client_socket, 500, "Internal Server Error", "text/html", body, len);
+                bytes_sent = len;
+                close(client_socket);
+                goto update_stats_and_log;
+            }
+            read_bytes = rb;
+            content = buf;
+            /* Best-effort cache insertion */
+            cache_put(full_path, content, read_bytes);
+        }
+    } else {
+        /* Large files: read directly without caching */
+        FILE *fp = fopen(full_path, "rb");
+        if (!fp) {
+            status_code = 404;
+            const char *body = "<h1>404 Not Found</h1>";
+            size_t len = strlen(body);
+            send_http_response(client_socket, 404, "Not Found", "text/html", body, len);
+            bytes_sent = len;
+            close(client_socket);
+            goto update_stats_and_log;
+        }
+        char *buf = malloc(fsize);
+        if (!buf) {
+            fclose(fp);
+            status_code = 500;
+            const char *body = "<h1>500 Internal Server Error</h1>";
+            size_t len = strlen(body);
+            send_http_response(client_socket, 500, "Internal Server Error", "text/html", body, len);
+            bytes_sent = len;
+            close(client_socket);
+            goto update_stats_and_log;
+        }
+        size_t rb = fread(buf, 1, fsize, fp);
         fclose(fp);
-        status_code = 500;
-        const char *body = "<h1>500 Internal Server Error</h1>";
-        size_t len = strlen(body);
-        send_http_response(client_socket, 500, "Internal Server Error", "text/html", body, len);
-        bytes_sent = len;
-        close(client_socket);
-        goto update_stats_and_log;
-    }
-
-    size_t read_bytes = fread(content, 1, fsize, fp);
-    fclose(fp);
-    if (read_bytes != (size_t)fsize)
-    {
-        free(content);
-        status_code = 500;
-        const char *body = "<h1>500 Internal Server Error</h1>";
-        size_t len = strlen(body);
-        send_http_response(client_socket, 500, "Internal Server Error", "text/html", body, len);
-        bytes_sent = len;
-        close(client_socket);
-        goto update_stats_and_log;
+        if (rb != (size_t)fsize) {
+            free(buf);
+            status_code = 500;
+            const char *body = "<h1>500 Internal Server Error</h1>";
+            size_t len = strlen(body);
+            send_http_response(client_socket, 500, "Internal Server Error", "text/html", body, len);
+            bytes_sent = len;
+            close(client_socket);
+            goto update_stats_and_log;
+        }
+        content = buf;
+        read_bytes = rb;
     }
 
     const char *mime = get_mime_type(full_path);
@@ -206,12 +261,68 @@ update_stats_and_log:
     log_request(&queue->log_mutex, client_ip, log_method, log_path, status_code, bytes_sent);
 }
 
+/* Local queue implementation for per-worker use */
+int local_queue_init(local_queue_t *q, int max_size)
+{
+    q->fds = malloc(sizeof(int) * max_size);
+    if (!q->fds) return -1;
+    q->head = 0;
+    q->tail = 0;
+    q->max_size = max_size;
+    q->shutting_down = 0;
+    if (pthread_mutex_init(&q->mutex, NULL) != 0) return -1;
+    if (pthread_cond_init(&q->cond, NULL) != 0) return -1;
+    return 0;
+}
+
+void local_queue_destroy(local_queue_t *q)
+{
+    if (!q) return;
+    free(q->fds);
+    pthread_mutex_destroy(&q->mutex);
+    pthread_cond_destroy(&q->cond);
+}
+
+int local_queue_enqueue(local_queue_t *q, int client_fd)
+{
+    pthread_mutex_lock(&q->mutex);
+    int next = (q->tail + 1) % q->max_size;
+    if (next == q->head) {
+        pthread_mutex_unlock(&q->mutex);
+        return -1; /* full */
+    }
+    q->fds[q->tail] = client_fd;
+    q->tail = next;
+    pthread_cond_signal(&q->cond);
+    pthread_mutex_unlock(&q->mutex);
+    return 0;
+}
+
+int local_queue_dequeue(local_queue_t *q)
+{
+    pthread_mutex_lock(&q->mutex);
+    while (q->head == q->tail && !q->shutting_down) {
+        pthread_cond_wait(&q->cond, &q->mutex);
+    }
+    if (q->head == q->tail && q->shutting_down) {
+        pthread_mutex_unlock(&q->mutex);
+        return -1;
+    }
+    int fd = q->fds[q->head];
+    q->head = (q->head + 1) % q->max_size;
+    pthread_mutex_unlock(&q->mutex);
+    return fd;
+}
+
 void *worker_thread(void *arg)
 {
-    (void)arg;
+    local_queue_t *q = (local_queue_t *)arg;
     while (1)
     {
-        int client_socket = dequeue();
+        int client_socket = local_queue_dequeue(q);
+        if (client_socket < 0) {
+            break; /* shutdown signaled */
+        }
 
         handle_client(client_socket);
     }

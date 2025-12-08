@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -pthread 
 LDFLAGS = -lrt
-SRC = src/master.c src/worker.c src/shared_mem.c src/semaphores.c src/config.c src/http.c src/ipc.c src/stats.c src/logger.c src/thread_pool.c
+SRC = src/master.c src/worker.c src/shared_mem.c src/semaphores.c src/config.c src/http.c src/ipc.c src/stats.c src/logger.c src/thread_pool.c src/cache.c
 OBJ = $(SRC:.c=.o)
 TARGET = server
 
