@@ -141,10 +141,9 @@ void handle_client(int client_socket)
     char *content = NULL;
     size_t read_bytes = 0;
 
-    /* Try per-worker cache for small files (<1MB) */
     if (fsize > 0 && fsize < (1 * 1024 * 1024)) {
         if (cache_get(full_path, &content, &read_bytes) == 0) {
-            /* served from cache */
+
         } else {
             FILE *fp = fopen(full_path, "rb");
             if (!fp) {
@@ -181,11 +180,11 @@ void handle_client(int client_socket)
             }
             read_bytes = rb;
             content = buf;
-            /* Best-effort cache insertion */
+
             cache_put(full_path, content, read_bytes);
         }
     } else {
-        /* Large files: read directly without caching */
+
         FILE *fp = fopen(full_path, "rb");
         if (!fp) {
             status_code = 404;
@@ -261,7 +260,6 @@ update_stats_and_log:
     log_request(&queue->log_mutex, client_ip, log_method, log_path, status_code, bytes_sent);
 }
 
-/* Local queue implementation for per-worker use */
 int local_queue_init(local_queue_t *q, int max_size)
 {
     q->fds = malloc(sizeof(int) * max_size);
@@ -289,7 +287,7 @@ int local_queue_enqueue(local_queue_t *q, int client_fd)
     int next = (q->tail + 1) % q->max_size;
     if (next == q->head) {
         pthread_mutex_unlock(&q->mutex);
-        return -1; /* full */
+        return -1; 
     }
     q->fds[q->tail] = client_fd;
     q->tail = next;
@@ -321,7 +319,7 @@ void *worker_thread(void *arg)
     {
         int client_socket = local_queue_dequeue(q);
         if (client_socket < 0) {
-            break; /* shutdown signaled */
+            break; 
         }
 
         handle_client(client_socket);

@@ -111,7 +111,6 @@ int dequeue() {
     sem_wait(&queue->filled_slots);
     pthread_mutex_lock(&queue->mutex);
 
-    /* If shutting down and no real items, wake up and exit */
     if (queue->shutting_down && queue->head == queue->tail) {
         pthread_mutex_unlock(&queue->mutex);
         return -1;

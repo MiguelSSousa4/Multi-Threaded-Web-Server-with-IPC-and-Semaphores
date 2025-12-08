@@ -8,7 +8,7 @@
 int send_fd(int socket, int fd_to_send)
 {
     struct msghdr msg = {0};
-    // FIX 1: Initialize this buffer to 0
+
     char buf[1] = {0}; 
     struct iovec io = {.iov_base = buf, .iov_len = 1};
 
@@ -18,7 +18,7 @@ int send_fd(int socket, int fd_to_send)
         struct cmsghdr align;
     } u;
     
-    // FIX 2: Zero out the entire union memory
+
     memset(&u, 0, sizeof(u)); 
 
     msg.msg_iov = &io;
@@ -39,7 +39,7 @@ int send_fd(int socket, int fd_to_send)
 int recv_fd(int socket)
 {
     struct msghdr msg = {0};
-    // FIX 3: Initialize here as well for safety
+
     char buf[1] = {0};
     struct iovec io = {.iov_base = buf, .iov_len = 1};
 
@@ -49,7 +49,7 @@ int recv_fd(int socket)
         struct cmsghdr align;
     } u;
 
-    // FIX 4: Zero out memory here too
+
     memset(&u, 0, sizeof(u));
 
     msg.msg_iov = &io;

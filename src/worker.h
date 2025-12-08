@@ -10,11 +10,9 @@ void get_client_ip(int client_fd, char *ip_buffer, size_t buffer_len);
 const char *get_mime_type(const char *path);
 void handle_client(int client_socket);
 
-/* forward */
 struct local_queue;
 void *worker_thread(void *arg);
 
-/* local per-worker queue used by threads inside a worker process */
 typedef struct local_queue {
     int *fds;
     int head;

@@ -15,7 +15,7 @@ typedef struct
     sem_t filled_slots;
     pthread_mutex_t mutex;
     sem_t log_mutex;
-    int shutting_down; /* set to 1 to signal worker threads to exit */
+    int shutting_down; 
 } connection_queue_t;
 
 typedef struct

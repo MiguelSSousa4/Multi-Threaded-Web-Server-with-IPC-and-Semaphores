@@ -23,7 +23,6 @@ void check_and_rotate_log()
     }
 }
 
-// NOTE: This function now expects the caller to hold the lock!
 void flush_buffer_to_disk_internal()
 {
     if (buffer_offset == 0) return; 
@@ -40,7 +39,6 @@ void flush_buffer_to_disk_internal()
     buffer_offset = 0;
 }
 
-// Public wrapper for flushing (used by thread)
 void flush_logger(sem_t *log_sem)
 {
     sem_wait(log_sem);
@@ -78,7 +76,6 @@ void log_request(sem_t *log_sem, const char *client_ip, const char *method,
     sem_post(log_sem);
 }
 
-// Kept for compatibility if called directly, but usually ignored in this design
 void flush_buffer_to_disk(sem_t *log_sem)
 {
     flush_logger(log_sem);
@@ -92,7 +89,7 @@ void *logger_flush_thread(void *arg)
         sleep(5);
         flush_logger(log_sem);
     }
-    /* final flush on shutdown */
+
     flush_logger(log_sem);
     return NULL;
 }

@@ -13,25 +13,22 @@
 #include <stdlib.h>
 #include <sys/wait.h>
 #include <pthread.h> 
-#include <signal.h>  // [Change 1] Include signal header
+#include <signal.h>  
 #include <errno.h>
 
 server_config_t config;
 
-// [Change 2] Global flag to control the main loop
 volatile sig_atomic_t server_running = 1;
 
-// [Change 2] Signal handler function
 void handle_sigint(int sig) {
     (void)sig;
-    server_running = 0; // Stop the loop when Ctrl+C is pressed
+    server_running = 0;
 }
 
 int main()
 {
     if (load_config("server.conf", &config) != 0) return 1;
 
-    // [Change 3] Register the signal handler
     struct sigaction sa;
     sa.sa_handler = handle_sigint;
     sigemptyset(&sa.sa_mask);
@@ -89,7 +86,6 @@ int main()
 
         int client_fd = accept(server_socket, (struct sockaddr *)&client_addr, &client_len);
         
-        // If accept failed because of Ctrl+C (EINTR), loop back and check server_running
         if (client_fd < 0) {
             if (errno == EINTR) continue;
             continue;
@@ -100,18 +96,14 @@ int main()
         current_worker = (current_worker + 1) % config.num_workers;
     }
 
-    // [Change 5] Cleanup Phase (Only reached after Ctrl+C)
     printf("\nShutting down server...\n");
 
-    // Close pipes to tell workers to exit
     for (int i = 0; i < config.num_workers; i++) {
         close(worker_pipes[i]);
     }
 
-    // Wait for all workers to finish their cleanup
     while (wait(NULL) > 0);
 
-    // Free master memory
     free(worker_pipes);
     close(server_socket);
 

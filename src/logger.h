@@ -17,7 +17,6 @@ void flush_logger(sem_t *log_sem);
 
 void *logger_flush_thread(void *arg);
 
-/* Request the logger thread to shut down cooperatively */
 void logger_request_shutdown();
 
 #endif
