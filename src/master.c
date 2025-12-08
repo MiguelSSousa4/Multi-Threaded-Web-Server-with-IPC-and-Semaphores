@@ -70,9 +70,7 @@ int main()
         if (pid == 0) {
             close(server_socket); 
             close(sv[0]); 
-            
-            // [Change 3] Workers ignore Ctrl+C so they don't die instantly.
-            // They will wait for the pipe to close (EOF) to exit cleanly.
+
             signal(SIGINT, SIG_IGN); 
 
             start_worker_process(sv[1]); 
@@ -85,7 +83,6 @@ int main()
 
     int current_worker = 0;
     
-    // [Change 4] Loop checks the flag instead of '1'
     while (server_running) {
         struct sockaddr_in client_addr;
         socklen_t client_len = sizeof(client_addr);

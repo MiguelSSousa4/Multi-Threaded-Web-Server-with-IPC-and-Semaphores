@@ -53,8 +53,7 @@ void log_request(sem_t *log_sem, const char *client_ip, const char *method,
 {
     time_t now = time(NULL);
     struct tm tm_info;
-    
-    // FIX 1: Use localtime_r (Thread Safe) instead of localtime
+
     localtime_r(&now, &tm_info);
     
     char timestamp[64];
@@ -66,13 +65,10 @@ void log_request(sem_t *log_sem, const char *client_ip, const char *method,
 
     if (len < 0) return;
 
-    // FIX 2: Critical Section starts HERE. 
-    // We must lock before reading/writing buffer_offset or log_buffer.
     sem_wait(log_sem);
 
     if (buffer_offset + len >= LOG_BUFFER_SIZE)
     {
-        // We already hold the lock, so we call the internal flush directly
         flush_buffer_to_disk_internal();
     }
 
@@ -80,7 +76,6 @@ void log_request(sem_t *log_sem, const char *client_ip, const char *method,
     buffer_offset += len;
 
     sem_post(log_sem);
-    // FIX 2: Critical Section ends.
 }
 
 // Kept for compatibility if called directly, but usually ignored in this design
