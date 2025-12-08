@@ -1,12 +1,15 @@
 #include "shared_mem.h"
+#include "config.h"
 #include <pthread.h>
 #include <stdio.h>
 #include <unistd.h>
 
+extern server_config_t config;
+
 void *stats_monitor_thread(void *arg) {
     (void)arg;
     while (1) {
-        sleep(30); 
+        sleep(config.timeout_seconds);
 
         sem_wait(&stats->mutex);
         

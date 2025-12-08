@@ -28,15 +28,14 @@ void start_worker_process(int ipc_socket)
         perror("Failed to create logger flush thread");
     }
 
-    /* per-worker local queue */
     local_queue_t local_q;
     if (local_queue_init(&local_q, config.max_queue_size) != 0) {
         perror("local_queue_init");
-        /* continue but threads won't be running */
     }
     
-        /* initialize per-worker cache (10MB) */
-        if (cache_init(10 * 1024 * 1024) != 0) {
+        size_t cache_bytes = (size_t)config.cache_size_mb * 1024 * 1024;
+
+        if (cache_init(cache_bytes) != 0) {
             perror("cache_init");
         }
 
@@ -46,7 +45,6 @@ void start_worker_process(int ipc_socket)
         threads = malloc(sizeof(pthread_t) * thread_count);
         if (!threads) {
             perror("Failed to allocate worker threads array");
-            /* proceed without threads */
             thread_count = 0;
         }
     }
@@ -64,7 +62,7 @@ void start_worker_process(int ipc_socket)
     {
         int client_fd = recv_fd(ipc_socket);
         if (client_fd < 0) {
-            /* IPC socket closed or error — begin shutdown */
+
             break;
         }
 
@@ -79,15 +77,12 @@ void start_worker_process(int ipc_socket)
         }
     }
 
-    /* Signal shutdown to worker threads */
     local_q.shutting_down = 1;
     pthread_cond_broadcast(&local_q.cond);
 
-    /* Request logger shutdown and join */
     logger_request_shutdown();
     pthread_join(flush_tid, NULL);
 
-    /* Join worker threads */
     for (int i = 0; i < created; i++) {
         pthread_join(threads[i], NULL);
     }

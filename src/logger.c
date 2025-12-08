@@ -1,3 +1,4 @@
+#include "config.h"
 #include "logger.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,15 +11,16 @@
 static char log_buffer[LOG_BUFFER_SIZE];
 static size_t buffer_offset = 0;
 static volatile int logger_shutting_down = 0;
+extern server_config_t config;
 
 void check_and_rotate_log()
 {
     struct stat st;
-    if (stat("access.log", &st) == 0)
+    if (stat(config.log_file, &st) == 0)
     {
         if (st.st_size >= MAX_LOG_FILE_SIZE)
         {
-            rename("access.log", "access.log.old");
+            rename(config.log_file, "access.log.old");
         }
     }
 }
@@ -29,7 +31,7 @@ void flush_buffer_to_disk_internal()
 
     check_and_rotate_log();
 
-    FILE *fp = fopen("access.log", "a");
+    FILE *fp = fopen(config.log_file, "a");
     if (fp)
     {
         fwrite(log_buffer, 1, buffer_offset, fp);
