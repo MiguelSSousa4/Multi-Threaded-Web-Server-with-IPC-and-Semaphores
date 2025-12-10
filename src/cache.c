@@ -3,7 +3,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <stdio.h>
-#include <bits/pthreadtypes.h>
+
 
 /* * Global Cache State
  * Protected by cache_lock for thread safety.

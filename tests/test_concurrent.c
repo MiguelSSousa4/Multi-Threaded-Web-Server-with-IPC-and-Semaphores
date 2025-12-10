@@ -9,6 +9,9 @@
 
 #include "../src/worker.h"
 #include "../src/cache.h"
+#include "../src/config.h"
+
+server_config_t config;
 
 static void pass(const char *name) { printf("[PASS] %s\n", name); fflush(stdout); }
 static void fail(const char *name) { fprintf(stderr, "[FAIL] %s\n", name); fflush(stderr); exit(1); }
@@ -20,7 +23,7 @@ void test_queue_basic(void)
 {
     local_queue_t q;
     int max_sz = 8;
-    int rc = local_queue_init(&q, max_sz);
+    int rc = local_queue_init(&q, max_sz + 1);
     if (rc != 0) fail("test_queue_basic - init");
 
     for (int i = 0; i < max_sz; ++i) {
