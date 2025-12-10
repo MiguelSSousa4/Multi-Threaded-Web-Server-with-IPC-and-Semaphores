@@ -1,6 +1,12 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -pthread 
-LDFLAGS = -lrt
+UNAME_S := $(shell uname -s)
+
+LDFLAGS =
+ifeq ($(UNAME_S),Linux)
+    LDFLAGS += -lrt
+endif
+
 SRC = src/main.c src/master.c src/worker.c src/shared_mem.c src/semaphores.c src/config.c src/http.c src/ipc.c src/stats.c src/logger.c src/thread_pool.c src/cache.c
 OBJ = $(SRC:.c=.o)
 TARGET = server
@@ -26,7 +32,10 @@ run: $(TARGET)
 clean:
 	rm -f $(OBJ) $(TEST_OBJ) $(TARGET) $(TEST_TARGET) *.log
 
-test: $(TARGET)
+test: $(TARGET) $(TEST_TARGET)
+	@echo "Running C Concurrency Tests..."
+	./$(TEST_TARGET)
+	@echo "\nRunning Bash Load Tests..."
 	chmod +x tests/test_load.sh
 	./tests/test_load.sh
 
