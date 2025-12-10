@@ -199,6 +199,149 @@ void test_cache_concurrency(void)
 }
 
 /* -------------------------
+   Test 5: Cache Data Integrity
+   ------------------------- */
+
+#define INTEGRITY_ITERS 1000
+#define INTEGRITY_THREADS 4
+
+void *integrity_worker(void *arg)
+{
+    int id = (int)(intptr_t)arg;
+    char key[64];
+    char data[64];
+    snprintf(key, sizeof(key), "/integrity/%d", id);
+    snprintf(data, sizeof(data), "data-for-%d", id);
+    size_t len = strlen(data);
+
+    for (int i = 0; i < INTEGRITY_ITERS; ++i) {
+        /* Write own key */
+        cache_put(key, data, len);
+        
+        /* Read own key and verify */
+        char *out = NULL;
+        size_t out_len = 0;
+        if (cache_get(key, &out, &out_len) == 0) {
+            if (out_len != len || memcmp(out, data, len) != 0) {
+                free(out);
+                fail("test_cache_integrity - data mismatch");
+            }
+            free(out);
+        }
+        
+        /* Occasionally read neighbor's key */
+        int neighbor = (id + 1) % INTEGRITY_THREADS;
+        char nkey[64];
+        snprintf(nkey, sizeof(nkey), "/integrity/%d", neighbor);
+        if (cache_get(nkey, &out, &out_len) == 0) {
+            char expected[64];
+            snprintf(expected, sizeof(expected), "data-for-%d", neighbor);
+            if (out_len != strlen(expected) || memcmp(out, expected, out_len) != 0) {
+                free(out);
+                fail("test_cache_integrity - neighbor data mismatch");
+            }
+            free(out);
+        }
+    }
+    return NULL;
+}
+
+void test_cache_integrity(void)
+{
+    if (cache_init(1024 * 1024) != 0) fail("test_cache_integrity - init");
+    
+    pthread_t threads[INTEGRITY_THREADS];
+    for (long i = 0; i < INTEGRITY_THREADS; ++i) {
+        pthread_create(&threads[i], NULL, integrity_worker, (void *)(intptr_t)i);
+    }
+    
+    for (int i = 0; i < INTEGRITY_THREADS; ++i) pthread_join(threads[i], NULL);
+    
+    cache_destroy();
+    pass("test_cache_integrity");
+}
+
+/* -------------------------
+   Test 6: Cache Eviction (LRU)
+   ------------------------- */
+void test_cache_eviction(void)
+{
+    /* Small cache: 100 bytes */
+    if (cache_init(100) != 0) fail("test_cache_eviction - init");
+
+    /* Add 5 items of 20 bytes each (fills cache) */
+    char val[20];
+    memset(val, 'A', 20);
+    
+    cache_put("/k/1", val, 20);
+    cache_put("/k/2", val, 20);
+    cache_put("/k/3", val, 20);
+    cache_put("/k/4", val, 20);
+    cache_put("/k/5", val, 20);
+
+    /* Verify all present */
+    char *out; size_t len;
+    if (cache_get("/k/1", &out, &len) != 0) fail("test_cache_eviction - missing /k/1"); free(out);
+    if (cache_get("/k/5", &out, &len) != 0) fail("test_cache_eviction - missing /k/5"); free(out);
+
+    /* Access /k/1 to make it MRU (Most Recently Used) */
+    if (cache_get("/k/1", &out, &len) != 0) fail("test_cache_eviction - missing /k/1 (2)"); free(out);
+
+    /* Cache state (MRU -> LRU): 1, 5, 4, 3, 2 */
+    
+    /* Add new item (forces eviction of LRU: /k/2) */
+    cache_put("/k/6", val, 20);
+
+    /* Verify /k/2 is gone */
+    if (cache_get("/k/2", &out, &len) == 0) { free(out); fail("test_cache_eviction - /k/2 should be evicted"); }
+    
+    /* Verify /k/1 (MRU) and /k/6 (New) are present */
+    if (cache_get("/k/1", &out, &len) != 0) fail("test_cache_eviction - /k/1 evicted incorrectly"); free(out);
+    if (cache_get("/k/6", &out, &len) != 0) fail("test_cache_eviction - /k/6 missing"); free(out);
+
+    cache_destroy();
+    pass("test_cache_eviction");
+}
+
+/* -------------------------
+   Test 7: Queue Shutdown
+   ------------------------- */
+static local_queue_t q_shut;
+
+void *shutdown_consumer(void *arg)
+{
+    (void)arg;
+    int v = local_queue_dequeue(&q_shut);
+    if (v != -1) {
+        fprintf(stderr, "Expected -1 (shutdown), got %d\n", v);
+        exit(1);
+    }
+    return NULL;
+}
+
+void test_queue_shutdown(void)
+{
+    if (local_queue_init(&q_shut, 10) != 0) fail("test_queue_shutdown - init");
+
+    pthread_t t;
+    if (pthread_create(&t, NULL, shutdown_consumer, NULL) != 0) fail("test_queue_shutdown - create");
+
+    /* Give thread time to block */
+    usleep(100000);
+
+    /* Trigger shutdown */
+    pthread_mutex_lock(&q_shut.mutex);
+    q_shut.shutting_down = 1;
+    pthread_cond_broadcast(&q_shut.cond);
+    pthread_mutex_unlock(&q_shut.mutex);
+
+    pthread_join(t, NULL);
+    
+    local_queue_destroy(&q_shut);
+    pass("test_queue_shutdown");
+}
+
+/* -------------------------
    Runner
    ------------------------- */
 
@@ -209,6 +352,9 @@ int main(void)
     test_queue_concurrent();
     test_cache_basic();
     test_cache_concurrency();
+    test_cache_integrity();
+    test_cache_eviction();
+    test_queue_shutdown();
     printf("All tests completed.\n");
     return 0;
 }
