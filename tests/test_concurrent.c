@@ -5,7 +5,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
-#include <stdint.h>    /* intptr_t */
+#include <stdint.h>    
 
 #include "../src/worker.h"
 #include "../src/cache.h"
@@ -281,11 +281,22 @@ void test_cache_eviction(void)
 
     /* Verify all present */
     char *out; size_t len;
-    if (cache_get("/k/1", &out, &len) != 0) fail("test_cache_eviction - missing /k/1"); free(out);
-    if (cache_get("/k/5", &out, &len) != 0) fail("test_cache_eviction - missing /k/5"); free(out);
+    if (cache_get("/k/1", &out, &len) != 0) {
+        fail("test_cache_eviction - missing /k/1"); 
+        free(out);
+    }
+
+    if (cache_get("/k/5", &out, &len) != 0) {
+        fail("test_cache_eviction - missing /k/5"); 
+        free(out);
+    }
+
 
     /* Access /k/1 to make it MRU (Most Recently Used) */
-    if (cache_get("/k/1", &out, &len) != 0) fail("test_cache_eviction - missing /k/1 (2)"); free(out);
+    if (cache_get("/k/1", &out, &len) != 0) {
+        fail("test_cache_eviction - missing /k/1 (2)"); 
+        free(out);
+    }
 
     /* Cache state (MRU -> LRU): 1, 5, 4, 3, 2 */
     
@@ -293,11 +304,20 @@ void test_cache_eviction(void)
     cache_put("/k/6", val, 20);
 
     /* Verify /k/2 is gone */
-    if (cache_get("/k/2", &out, &len) == 0) { free(out); fail("test_cache_eviction - /k/2 should be evicted"); }
+    if (cache_get("/k/2", &out, &len) == 0) { 
+        free(out); 
+        fail("test_cache_eviction - /k/2 should be evicted"); 
+    }
     
     /* Verify /k/1 (MRU) and /k/6 (New) are present */
-    if (cache_get("/k/1", &out, &len) != 0) fail("test_cache_eviction - /k/1 evicted incorrectly"); free(out);
-    if (cache_get("/k/6", &out, &len) != 0) fail("test_cache_eviction - /k/6 missing"); free(out);
+    if (cache_get("/k/1", &out, &len) != 0) {
+        fail("test_cache_eviction - /k/1 evicted incorrectly"); 
+        free(out);
+    } 
+    
+    if (cache_get("/k/6", &out, &len) != 0) {
+        fail("test_cache_eviction - /k/6 missing"); free(out);
+    }
 
     cache_destroy();
     pass("test_cache_eviction");

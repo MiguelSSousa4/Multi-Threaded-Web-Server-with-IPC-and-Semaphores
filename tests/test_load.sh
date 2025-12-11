@@ -21,7 +21,7 @@ setup() {
     fi
 
     echo "1. Compiling Server..."
-    make 
+    make -s
     if [ $? -ne 0 ]; then
         echo -e "${RED}Compilation failed! Exiting.${NC}"
         exit 1
