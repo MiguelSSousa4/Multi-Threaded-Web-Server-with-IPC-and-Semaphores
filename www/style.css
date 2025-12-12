@@ -51,6 +51,19 @@ nav a:hover {
     border: 1px solid #e1e4e8;
 }
 
+
+.hero-img {
+
+    max-width: 300px;
+
+    width: 100%; 
+
+    height: auto; 
+
+    display: block;
+    margin: 0 auto 20px auto; 
+}
+
 .hero h1 {
     font-size: 2rem;
     color: #2c3e50;
